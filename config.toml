@@ -2,5 +2,7 @@ baseURL = "https://example.com/"      # replace
 title = "My Site"
 enableGitInfo = true                  # optional; gives .GitInfo at build-time
 [params]
-  github_repo = "towardens/paranoid_android"       # optional: human reference (not used by Action)
+  github_repo = "towardens/paranoid-android"       # optional: human reference (not used by Action)
   github_branch = "main"
+[outputs]
+  home = ["HTML", "RSS"]
