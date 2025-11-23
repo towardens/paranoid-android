@@ -1,0 +1,98 @@
+name: Build and deploy with commit history
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Generate commit history JSON files
+        env:
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, json, subprocess, pathlib, sys
+
+          repo = os.environ.get("REPO")
+          branch = os.environ.get("BRANCH", "main")
+          content_root = pathlib.Path("content")
+          out_root = pathlib.Path("data/history")
+
+          if not content_root.exists():
+              print("No content/ directory found; nothing to generate.")
+              sys.exit(0)
+
+          out_root.mkdir(parents=True, exist_ok=True)
+
+          # Find all markdown files
+          files = [p for p in content_root.rglob("*.md")]
+
+          def git_log_for_file(path):
+              # Use git log with ISO date; separate fields with \t
+              cmd = [
+                  "git", "log",
+                  "--pretty=format:%H\t%aI\t%an\t%s",
+                  "--", str(path)
+              ]
+              try:
+                  out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+              except subprocess.CalledProcessError:
+                  return []
+              lines = out.decode("utf-8", errors="replace").splitlines()
+              commits = []
+              for line in lines:
+                  parts = line.split("\t", 3)
+                  if len(parts) < 4:
+                      # Skip malformed lines
+                      continue
+                  h, date, author, message = parts
+                  commits.append({
+                      "hash": h,
+                      "date": date,
+                      "author": author,
+                      "message": message,
+                      "url": f"https://github.com/{repo}/commit/{h}"
+                  })
+              return commits
+
+          for f in files:
+              rel = f.relative_to(content_root)   # e.g. posts/my-post.md
+              out_dir = out_root.joinpath(rel.parent)  # data/history/posts
+              out_dir.mkdir(parents=True, exist_ok=True)
+              out_file = out_dir.joinpath(rel.stem + ".json")  # data/history/posts/my-post.json
+
+              print(f"Generating {out_file} from {f}")
+              commits = git_log_for_file(f)
+              data = {"commits": commits}
+              with out_file.open("w", encoding="utf-8") as fh:
+                  json.dump(data, fh, ensure_ascii=False, indent=2)
+          PY
+
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v2
+        with:
+          hugo-version: 'latest'
+
+      - name: Build site
+        run: hugo --minify
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+
